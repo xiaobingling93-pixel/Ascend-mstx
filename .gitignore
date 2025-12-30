@@ -1,0 +1,11 @@
+.vscode
+build/
+build_ut/
+build_ut_c/
+build_ut_cpp/
+output/
+*.so
+cmake-build-debug
+.codemate/
+
+.codemate
