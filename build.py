@@ -26,18 +26,10 @@ import argparse
 
 
 def exec_cmd(env, cmd):
-    result = subprocess.run(cmd, env=env, capture_output=False, text=True, timeout=3600)
+    result = subprocess.run(cmd, env=env, capture_output=False, text=True, timeout=36000)
     if result.returncode != 0:
         logging.error("execute command %s failed, please check the log", " ".join(cmd))
         sys.exit(result.returncode)
-
-
-def update_submodle():
-    logging.info("============ start download thirdparty code using git submodule ============")
-    cmd = ["git", "submodule", "update", "--init", "--recursive", "--depth=1", "--jobs=4"]
-    env = os.environ.copy()
-    exec_cmd(env, cmd)
-    logging.info("============ download thirdparty code  done ============")
 
 
 def execute_make(build_path, cmake_cmd, make_cmd, install_cmd):
@@ -155,7 +147,8 @@ if __name__ == "__main__":
         cmake_cmd.append("-DBUILD_TESTS=ON")
         install_cmd = ""  # ut没有检查output输出的用例，因此不需要执行install
         # 只有测试构建时才需更新子仓
-        update_submodle()
+        from download_dependencies import update_submodule
+        update_submodule(args)
         # 执行C测试构建
         cmake_cmd_c = cmake_cmd.copy()
         cmake_cmd_c.append("-DLANG=C")
