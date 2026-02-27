@@ -49,8 +49,8 @@ add_subdirectory(python)
 set(PACKAGE_DIR ${CMAKE_CURRENT_BINARY_DIR}/package/mstx)
 add_custom_command(
     OUTPUT ${PACKAGE_DIR}/package.flag
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PACKAGE_DIR}/lib64 ${CMAKE_INSTALL_PREFIX}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ROOT_DIR}/c/include/mstx ${PACKAGE_DIR}/include
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PACKAGE_DIR}/lib64 ${CMAKE_INSTALL_PREFIX} ${PACKAGE_DIR}/include/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${ROOT_DIR}/c/include/mstx ${PACKAGE_DIR}/include/mstx
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mstx> $<TARGET_FILE:ms_tools_ext> ${PACKAGE_DIR}/lib64
     COMMAND ${CMAKE_COMMAND} -E copy ${ROOT_DIR}/README.md ${PACKAGE_DIR}/
     COMMAND ${CMAKE_COMMAND} -E copy ${ROOT_DIR}/setup.py ${PACKAGE_DIR}/
