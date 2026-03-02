@@ -15,149 +15,172 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 # -------------------------------------------------------------------------
-
-import os
-import sys
-import logging
-import subprocess
-import multiprocessing
-import shutil
 import argparse
+import logging
+import multiprocessing
+import os
+import shutil
+import subprocess
+import sys
+import traceback
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def exec_cmd(env, cmd):
-    result = subprocess.run(cmd, env=env, capture_output=False, text=True, timeout=36000)
-    if result.returncode != 0:
-        logging.error("execute command %s failed, please check the log", " ".join(cmd))
-        sys.exit(result.returncode)
+class BuildManager:
+    """
+    统一构建管理：依赖拉取 → CMake 配置 → 并行编译 → 安装 / 测试。
 
+    用法:
+        python build.py                  完整构建（拉取依赖 + Release 编译）
+        python build.py local            本地构建（跳过依赖拉取, Release 编译）
+        python build.py test             单元测试（拉取依赖 + Debug 编译 + 执行测试）
+        python build.py test local       单元测试（跳过依赖拉取, Debug 编译 + 执行测试）
+        python build.py -r <revision>    指定依赖的内部源码仓(例如msopcom)的 Git 分支/标签/commit
 
-def execute_make(build_path, cmake_cmd, make_cmd, install_cmd):
-    logging.info("*************** Create build_path: "+ build_path +" *****************")
-    if not os.path.exists(build_path):
-        os.makedirs(build_path, mode=0o755)
-    os.chdir(build_path)
-    logging.info("*************** Execute cmake, make and make install *****************")
-    env = os.environ.copy()
-    exec_cmd(env, cmake_cmd)
-    exec_cmd(env, make_cmd)
-    if install_cmd != "":
-        exec_cmd(env, install_cmd)
+    参数说明:
+        - 参数: command : 构建动作: 为空时为全构建, local 为跳过依赖下载, test 为运行单元测试。
+        - 参数: -r, --revision : 指定 Git 修订版本或标签用于依赖检出。
+    """
 
+    def __init__(self):
+        self.project_root = Path(__file__).resolve().parent
+        self.build_jobs = multiprocessing.cpu_count()
+        argument_parser = argparse.ArgumentParser(description='Build the project and optionally run tests.')
+        argument_parser.add_argument('command', nargs='*', default=[],
+                                     choices=[[], 'local', 'test'],
+                                     help='Build action: omit for full build, "local" to skip dependency download, "test" to run unit tests')
+        argument_parser.add_argument('-r', '--revision',
+                                     help='Specify Git revision for internal dependent repo (e.g., msopcom).')
+        self.parsed_arguments = argument_parser.parse_args()
 
-def execute_ctest(build_path, clang):
-    logging.info("*************** TEST "+ clang +" WITHOUT INIT *****************")
-    os.chdir(build_path)
-    env = os.environ.copy()
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
-    library_path = os.path.join(build_path, "c") + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    env["LD_LIBRARY_PATH"] = library_path
-    exec_cmd(env, ["./test/c/mstx_test_lib_" + clang])
+    def _execute_command(self, command_sequence, timeout_seconds=36000, cwd=None, env=None):
+        logging.info("Running: %s", " ".join(command_sequence))
+        subprocess.run(command_sequence, timeout=timeout_seconds, check=True, cwd=cwd, env=env)
 
-    logging.info("*************** TEST "+ clang +" INIT WITH PRELOAD *****************")
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = "./test/c/libinjection_test.so"
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
-    env["LD_LIBRARY_PATH"] = library_path
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
+    def _build_test_target(self, lang, unit_test_build_dir):
+        """构建指定语言变体（C 或 CPP）的测试目标。"""
+        test_build_path = Path(f"{unit_test_build_dir}_{lang.lower()}")
+        test_build_path.mkdir(exist_ok=True)
 
-    logging.info("*************** TEST "+ clang +" INIT WITH NORMAL ENV *****************")
-    env = os.environ.copy()
-    env["MSTX_INJECTION_PATH"] = os.getcwd() + "/test/c/libinjection_test.so"
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
-    env["LD_LIBRARY_PATH"] = library_path
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
+        self._execute_command(["cmake", "..", "-DBUILD_TESTS=ON", f"-DLANG={lang}"],
+                              cwd=str(test_build_path))
+        self._execute_command(["make", "-j", str(self.build_jobs)],
+                              cwd=str(test_build_path))
 
-    logging.info("*************** TEST "+ clang +" INIT WITH ABNORMAL ENV *****************")
-    env = os.environ.copy()
-    env["MSTX_INJECTION_PATH"] = "1234"
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
-    env["LD_LIBRARY_PATH"] = library_path
-    exec_cmd(env, ["./test/c/mstx_test_" + clang])
+    def _run_c_tests(self, build_dir, lang):
+        """运行 C/CPP 单元测试，覆盖无初始化 / preload / 正常环境 / 异常环境等场景。"""
+        cwd = str(build_dir)
+        test_binary = f"./test/c/mstx_test_{lang}"
+        test_lib_binary = f"./test/c/mstx_test_lib_{lang}"
+        lib_path = str(build_dir / "c") + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
 
+        logging.info("Testing %s without init", lang)
+        self._execute_command([test_binary], cwd=cwd)
+        env = os.environ.copy()
+        env["LD_LIBRARY_PATH"] = lib_path
+        self._execute_command([test_lib_binary], cwd=cwd, env=env)
 
-def execute_python_test(build_path):
-    logging.info("*************** INIT PYTHON TEST WORKDIR *****************")
-    os.chdir(build_path)
-    test_dir = os.path.join(build_path, "test", "python")
-    mstxSoDir = os.path.join(build_path, "python")
-    os.makedirs(test_dir, exist_ok=True)
-    shutil.copytree(os.path.join(build_path, "../test/python"), test_dir, dirs_exist_ok=True)
-    library_path = os.path.join(build_path, "c") + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    logging.info("*************** TEST PYTHON WITHOUT INIT *****************")
-    env = os.environ.copy()
-    env["PYTHONPATH"] = mstxSoDir + os.pathsep + os.environ.get('PYTHONPATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_without_init.py"])
-    env["LD_LIBRARY_PATH"] = library_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_without_init.py"])    
+        logging.info("Testing %s init with preload", lang)
+        env = os.environ.copy()
+        env["LD_PRELOAD"] = "./test/c/libinjection_test.so"
+        self._execute_command([test_binary], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path
+        self._execute_command([test_binary], cwd=cwd, env=env)
 
-    logging.info("*************** TEST PYTHON INIT WITH PRELOAD *****************")
-    env = os.environ.copy()
-    env["LD_PRELOAD"] = "./test/c/libinjection_test.so"
-    env["PYTHONPATH"] = mstxSoDir + os.pathsep + os.environ.get('PYTHONPATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_with_init.py"])
-    env["LD_LIBRARY_PATH"] = library_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_with_init.py"])
+        logging.info("Testing %s init with normal env", lang)
+        env = os.environ.copy()
+        env["MSTX_INJECTION_PATH"] = cwd + "/test/c/libinjection_test.so"
+        self._execute_command([test_binary], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path
+        self._execute_command([test_binary], cwd=cwd, env=env)
 
-    logging.info("*************** TEST PYTHON INIT WITH NORMAL ENV *****************")
-    env = os.environ.copy()
-    env["MSTX_INJECTION_PATH"] = os.getcwd() + "/test/c/libinjection_test.so"
-    env["PYTHONPATH"] = mstxSoDir + os.pathsep + os.environ.get('PYTHONPATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_with_init.py"])
-    env["LD_LIBRARY_PATH"] = library_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_with_init.py"])
-     
-    logging.info("*************** TEST PYTHON INIT WITH ABNORMAL ENV *****************")
-    env = os.environ.copy()
-    env["MSTX_INJECTION_PATH"] = "1234"
-    env["PYTHONPATH"] = mstxSoDir + os.pathsep + os.environ.get('PYTHONPATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_without_init.py"])
-    env["LD_LIBRARY_PATH"] = library_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
-    exec_cmd(env, ["pytest", "./test/python/test_mstx_without_init.py"])
+        logging.info("Testing %s init with abnormal env", lang)
+        env = os.environ.copy()
+        env["MSTX_INJECTION_PATH"] = "1234"
+        self._execute_command([test_binary], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path
+        self._execute_command([test_binary], cwd=cwd, env=env)
 
-def create_arg_parser():
-    parser = argparse.ArgumentParser(description='Build script with optional testing')
-    parser.add_argument('command', nargs='*', default='[]', 
-                    choices=['[]', 'local', 'test'],
-                    help='Command to execute (python build.py [ |local|test]):\n')
-    parser.add_argument('-r', '--revision',
-                        help="Build with specific revision or tag")
-    return parser
+    def _run_python_tests(self, build_dir):
+        """运行 Python 单元测试，覆盖无初始化 / preload / 正常环境 / 异常环境等场景。"""
+        cwd = str(build_dir)
+        test_dir = str(build_dir / "test" / "python")
+        mstx_so_dir = str(build_dir / "python")
+        lib_path = str(build_dir / "c") + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
+        base_pythonpath = mstx_so_dir + os.pathsep + os.environ.get('PYTHONPATH', '')
+
+        os.makedirs(test_dir, exist_ok=True)
+        shutil.copytree(str(self.project_root / "test" / "python"), test_dir, dirs_exist_ok=True)
+
+        logging.info("Testing Python without init")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = base_pythonpath
+        self._execute_command(["pytest", "./test/python/test_mstx_without_init.py"], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
+        self._execute_command(["pytest", "./test/python/test_mstx_without_init.py"], cwd=cwd, env=env)
+
+        logging.info("Testing Python init with preload")
+        env = os.environ.copy()
+        env["LD_PRELOAD"] = "./test/c/libinjection_test.so"
+        env["PYTHONPATH"] = base_pythonpath
+        self._execute_command(["pytest", "./test/python/test_mstx_with_init.py"], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
+        self._execute_command(["pytest", "./test/python/test_mstx_with_init.py"], cwd=cwd, env=env)
+
+        logging.info("Testing Python init with normal env")
+        env = os.environ.copy()
+        env["MSTX_INJECTION_PATH"] = cwd + "/test/c/libinjection_test.so"
+        env["PYTHONPATH"] = base_pythonpath
+        self._execute_command(["pytest", "./test/python/test_mstx_with_init.py"], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
+        self._execute_command(["pytest", "./test/python/test_mstx_with_init.py"], cwd=cwd, env=env)
+
+        logging.info("Testing Python init with abnormal env")
+        env = os.environ.copy()
+        env["MSTX_INJECTION_PATH"] = "1234"
+        env["PYTHONPATH"] = base_pythonpath
+        self._execute_command(["pytest", "./test/python/test_mstx_without_init.py"], cwd=cwd, env=env)
+        env["LD_LIBRARY_PATH"] = lib_path + os.pathsep + os.environ.get('LD_LIBRARY_PATH', '')
+        self._execute_command(["pytest", "./test/python/test_mstx_without_init.py"], cwd=cwd, env=env)
+
+    def run(self):
+        os.chdir(self.project_root)
+
+        # 在非 local 场景下按需更新依赖；在 local 场景下仅使用本地已有代码，不更新依赖。
+        if 'local' not in self.parsed_arguments.command:
+            from download_dependencies import DependencyManager
+            DependencyManager(self.parsed_arguments).run()
+
+        if 'test' in self.parsed_arguments.command:
+            # -------------------- 单元测试 --------------------
+            # ut 使用单独的目录构建，与 build 区分开，避免相互影响
+            unit_test_build_dir = self.project_root / "build_ut"
+
+            for lang in ("C", "CPP"):
+                self._build_test_target(lang, unit_test_build_dir)
+
+            ut_c_dir = Path(f"{unit_test_build_dir}_c")
+            ut_cpp_dir = Path(f"{unit_test_build_dir}_cpp")
+
+            self._run_c_tests(ut_c_dir, "C")
+            self._run_c_tests(ut_cpp_dir, "CPP")
+            self._run_python_tests(ut_cpp_dir)
+        else:
+            # -------------------- 产品构建 --------------------
+            product_build_dir = self.project_root / "build"
+            product_build_dir.mkdir(exist_ok=True)
+            os.chdir(product_build_dir)
+
+            self._execute_command(["cmake", ".."])
+            self._execute_command(["make", "-j", str(self.build_jobs)])
+            self._execute_command(["make", "install"])
+
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    parser = create_arg_parser()
-    args = parser.parse_args()
-
-    current_dir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
-    os.chdir(current_dir)
-    
-    build_path = os.path.join(current_dir, "build")
-    cmake_cmd = ["cmake", ".."]
-    cpu_cores = multiprocessing.cpu_count()
-    make_cmd = ["make", "-j", str(cpu_cores)]
-    install_cmd = ["make", "install"]
-
-    if 'test' not in args.command:
-        # 执行CPP代码构建
-        execute_make(build_path, cmake_cmd, make_cmd, install_cmd)
-    else:
-        # ut使用单独的目录构建，与build区分开，避免相互影响，并传入对应的参数
-        build_path = os.path.join(current_dir, "build_ut")
-        cmake_cmd.append("-DBUILD_TESTS=ON")
-        install_cmd = ""  # ut没有检查output输出的用例，因此不需要执行install
-        # 只有测试构建时才需更新子仓
-        from download_dependencies import update_submodule
-        update_submodule(args)
-        # 执行C测试构建
-        cmake_cmd_c = cmake_cmd.copy()
-        cmake_cmd_c.append("-DLANG=C")
-        execute_make(build_path+"_c", cmake_cmd_c, make_cmd, install_cmd)
-        # 执行CPP测试构建
-        cmake_cmd_cpp = cmake_cmd.copy()
-        cmake_cmd_cpp.append("-DLANG=CPP")
-        execute_make(build_path+"_cpp", cmake_cmd_cpp, make_cmd, install_cmd)
-        # 运行测试用例
-        execute_ctest(build_path+"_c", "C")
-        execute_ctest(build_path+"_cpp", "CPP")
-        execute_python_test(build_path+"_cpp")
+    try:
+        BuildManager().run()
+    except Exception:
+        logging.error(f"Unexpected error: {traceback.format_exc()}")
+        sys.exit(1)
