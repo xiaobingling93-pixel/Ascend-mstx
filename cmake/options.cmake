@@ -11,4 +11,6 @@ add_link_options("-Wl,-z,relro")
 add_link_options("-Wl,-z,now")
 add_link_options("-Wl,-z,noexecstack")
 add_link_options("-pie")
-add_link_options("-s") #strip
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_link_options("-s")
+endif()

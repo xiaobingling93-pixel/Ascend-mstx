@@ -64,7 +64,7 @@ class BuildManager:
         test_build_path = Path(f"{unit_test_build_dir}_{lang.lower()}")
         test_build_path.mkdir(exist_ok=True)
 
-        self._execute_command(["cmake", "..", "-DBUILD_TESTS=ON", f"-DLANG={lang}"],
+        self._execute_command(["cmake", "..", "-DBUILD_TESTS=ON", f"-DLANG={lang}", "-DCMAKE_BUILD_TYPE=Debug"],
                               cwd=str(test_build_path))
         self._execute_command(["make", "-j", str(self.build_jobs)],
                               cwd=str(test_build_path))

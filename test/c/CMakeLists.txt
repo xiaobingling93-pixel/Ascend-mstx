@@ -1,6 +1,6 @@
 set(gtest_header ${THIRDPARTY_PATH}/googletest/googletest/include/)
-set(CMAKE_CXX_FLAGS "-fprofile-arcs -ftest-coverage -lgcov")
-set(CMAKE_C_FLAGS "-fprofile-arcs -ftest-coverage -lgcov")
+string(APPEND CMAKE_CXX_FLAGS " -fprofile-arcs -ftest-coverage -lgcov")
+string(APPEND CMAKE_C_FLAGS " -fprofile-arcs -ftest-coverage -lgcov")
 
 add_executable(mstx_test_${LANG} test_core_api.c)
 add_library(mstx_static_lib_${LANG} STATIC test_core.cpp)
