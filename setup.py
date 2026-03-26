@@ -33,7 +33,7 @@ def get_git_url():
 
 setup(
     name = 'mstx',
-    version = '1.0.0',
+    version = '26.0.0',
     author =' mstx',
     author_email = 'mstx',
     description = 'mstx',

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(CMAKE_CXX_COMPILER "g++")
-project(mstx VERSION 1.0.0)
+project(mstx VERSION 26.0.0)
 
 get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}" ABSOLUTE)
 get_filename_component(THIRDPARTY_PATH thirdparty/ ABSOLUTE)
