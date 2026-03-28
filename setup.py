@@ -6,7 +6,7 @@ from packaging.tags import sys_tags
 tag = next(sys_tags())
 
 def get_git_url():
-    url = 'https://gitee.com/Ascend/MindStudio-TX'
+    url = 'https://gitcode.com/Ascend/mstx'
     try:
         # 获取远程 origin 的 URL
         result = subprocess.run(
