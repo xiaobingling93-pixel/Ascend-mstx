@@ -20,14 +20,14 @@ python build.py
 python build.py test
 ```
 
-输出类似如下跑的用例数和通过用例数相同即表示成功：
+如果输出类似如下，且跑的用例数和通过用例数相同，即表示成功：
 
 ```text
 [----------] 4 tests from CoreApi (8ms total) 
 ```
 
 ```text
-============= 6 passed in 0.03s =============
+============= 4 passed in 0.03s =============
 ```
 
-注：需要环境中提前安装pytest以执行python测试
+注：需要环境中提前安装pytest以执行python测试。存在多个独立测试套，输出结果与样例类似时，即表示运行成功。

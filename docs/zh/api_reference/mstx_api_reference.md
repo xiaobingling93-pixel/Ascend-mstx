@@ -693,7 +693,7 @@ regionsDesc.regionType = MSTX_MEM_TYPE_VIRTUAL_ADDRESS;
 regionsDesc.regionCount = 1;
 regionsDesc.regionDescArray = rangesDesc;
 regionsDesc.regionHandleArrayOut = regionHandles;
-mstxMemRegionsRegister(globalDomain, ®ionsDesc);              // 二次分配注册 
+mstxMemRegionsRegister(globalDomain, regionsDesc);              // 二次分配注册 
 ```
 
 ## mstxMemRegionsUnregister<a id="mstxMemRegionsUnregister"></a>
